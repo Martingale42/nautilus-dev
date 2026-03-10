@@ -259,12 +259,39 @@ After completing the design, produce a document with:
 
 ## References
 
-Load these for detailed API information (relative to this skill folder):
-- `references/concepts/architecture.md`
-- `references/concepts/strategies.md`
-- `references/concepts/actors.md`
-- `references/concepts/message_bus.md`
-- `references/concepts/data.md`
+### Concept Docs (relative to this skill folder)
+- `references/concepts/architecture.md` — system design, DDD, core components
+- `references/concepts/overview.md` — platform features, supported asset classes
+- `references/concepts/strategies.md` — Strategy class, lifecycle, order management
+- `references/concepts/actors.md` — Actor base class, subscriptions, signals
+- `references/concepts/message_bus.md` — pub/sub, request/response messaging
+- `references/concepts/data.md` — data types, order book levels, bar aggregations
+- `references/concepts/execution.md` — order flow through the execution pipeline
+- `references/concepts/orders.md` — all order types, lifecycle, execution instructions
+- `references/concepts/positions.md` — position lifecycle, PnL calculations
+- `references/concepts/instruments.md` — instrument types, symbology, precision
+- `references/concepts/value_types.md` — Price, Quantity, Money, fixed-point
+- `references/concepts/cache.md` — in-memory state store
+- `references/concepts/adapters.md` — adapter architecture
+- `references/concepts/live.md` — live deployment, reconciliation
+- `references/concepts/backtesting.md` — BacktestEngine vs BacktestNode
+- `references/concepts/reports.md` — reporting and DataFrames
+- `references/concepts/portfolio.md` — portfolio tracking, statistics
+
+### API Reference
+- `references/api_reference/` — full API reference for all modules (trading, execution, data, model/, adapters/, etc.)
+
+## Domain Skill Handoff
+
+If the architecture requires work at the NT internals level, hand off to the appropriate domain skill:
+
+- New adapter needed → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-adapter-dev
+- Custom execution pipeline → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-core-dev
+- Custom persistence/catalog → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-persistence-dev
+- Extending the Kernel → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-kernel-dev
+- Custom backtest engine behavior → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-backtest-dev
+- Custom analysis/statistics → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-analysis-dev
+- Rust-side Strategy/Actor → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-strategy-dev
 
 ## Next Step
 

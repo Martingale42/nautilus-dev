@@ -740,13 +740,48 @@ sudo cargo flamegraph --bench matching -p nautilus-common --profile bench
 - [ ] Flamegraph generated for optimization work
 - [ ] Before/after comparison documented
 
+## Adapter-Specific Review
+
+When reviewing adapter implementations, additionally validate against:
+
+- `references/developer_guide/adapters.md` — adapter development spec (if available)
+- `references/developer_guide/spec_data_testing.md` — data test matrix (TC-D01 to TC-D72)
+- `references/developer_guide/spec_exec_testing.md` — execution test matrix (TC-E01+)
+
+### Data Client Review Checklist
+
+- [ ] All TC-D test cases from spec_data_testing.md addressed
+- [ ] Instrument provider loads and normalizes correctly
+- [ ] WebSocket reconnection handled
+- [ ] Rate limiting implemented per venue spec
+
+### Execution Client Review Checklist
+
+- [ ] All TC-E test cases from spec_exec_testing.md addressed
+- [ ] Order reconciliation on connect
+- [ ] All supported order types tested
+- [ ] Error/rejection handling for unsupported operations
+
+## Domain Skill Handoff
+
+For deeper review of specific domains:
+
+- Adapter internals → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-adapter-dev
+- Core type changes → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-core-dev
+- Persistence changes → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-persistence-dev
+- Backtest engine changes → **REQUIRED SUB-SKILL:** Use nautilus-dev:nt-backtest-dev
+
 ## References
 
 For detailed standards (relative to this skill folder):
 - `references/developer_guide/coding_standards.md`
 - `references/developer_guide/testing.md`
 - `references/developer_guide/rust.md` - Rust style conventions
+- `references/developer_guide/python.md` - Python style conventions
 - `references/developer_guide/ffi.md` - FFI memory contract
 - `references/developer_guide/benchmarking.md` - Benchmarking guide
+- `references/developer_guide/adapters.md` - Adapter development spec
+- `references/developer_guide/spec_data_testing.md` - Data test matrix
+- `references/developer_guide/spec_exec_testing.md` - Execution test matrix
 - `references/concepts/backtesting.md`
 - `references/concepts/live.md` - Live trading configuration

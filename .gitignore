@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# User-specific cached knowledge (per-session exploration findings)
+cached/
+
+docs/plans/
