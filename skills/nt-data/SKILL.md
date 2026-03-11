@@ -153,25 +153,37 @@ use nautilus_serialization::arrow::ArrowSerializer;
 
 ### Custom Persistence Backend
 
-Implement persistence traits in Rust for alternative storage backends:
+The persistence layer uses Arrow as its intermediate format. Custom backends implement reading/writing Arrow RecordBatches:
 
 ```rust
 use pyo3::prelude::*;
+use arrow::record_batch::RecordBatch;
 
 #[pyclass]
-pub struct MyStorageBackend { ... }
+pub struct MyStorageBackend {
+    // Backend state (connection pool, file handles, etc.)
+}
 
 #[pymethods]
 impl MyStorageBackend {
-    fn write_data(&self, data: &[u8]) -> PyResult<()> { ... }
-    fn read_data(&self, query: &str) -> PyResult<Vec<u8>> { ... }
+    #[new]
+    fn new(connection_str: &str) -> PyResult<Self> { ... }
+
+    fn write_batch(&self, batch: &RecordBatch) -> PyResult<()> { ... }
+    fn read_batches(&self, query: &str) -> PyResult<Vec<RecordBatch>> { ... }
 }
 ```
 
-**PyO3 conventions:**
+### Custom Arrow Schemas in Rust
+
+For performance-critical serialization, implement Arrow schema conversion in Rust rather than Python. See `crates/serialization/src/arrow/` for the built-in schema implementations.
+
+### PyO3 Binding Conventions
+
 - Use `#[pyclass]` and `#[pymethods]` for Python-visible types
 - Register in `crates/pyo3/src/lib.rs`
-- Follow Rust edition 2024 conventions
+- Arrow types cross the FFI boundary via PyArrow's C Data Interface
+- Wrap FFI functions in `abort_on_panic(|| { ... })`
 
 ## Key Conventions
 

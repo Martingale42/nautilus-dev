@@ -159,6 +159,8 @@ use nautilus_analysis::analyzer::PortfolioAnalyzer;
 
 ### Custom Indicator in Rust
 
+Rust indicators are significantly faster for compute-heavy calculations (e.g., order book features, multi-timeframe analysis). Implement the `Indicator` trait:
+
 ```rust
 use pyo3::prelude::*;
 use nautilus_indicators::indicator::Indicator;
@@ -167,23 +169,59 @@ use nautilus_indicators::indicator::Indicator;
 pub struct MyRustIndicator {
     period: usize,
     value: f64,
+    count: usize,
+    has_inputs: bool,
     initialized: bool,
 }
 
 #[pymethods]
 impl MyRustIndicator {
     #[new]
-    fn new(period: usize) -> Self { ... }
+    fn new(period: usize) -> Self {
+        Self { period, value: 0.0, count: 0, has_inputs: false, initialized: false }
+    }
 
-    fn handle_bar(&mut self, bar: &Bar) { ... }
-    fn update_raw(&mut self, value: f64) { ... }
+    fn handle_bar(&mut self, bar: &Bar) {
+        self.update_raw(bar.close.as_f64());
+    }
+
+    fn update_raw(&mut self, value: f64) {
+        self.has_inputs = true;
+        // Core calculation
+        self.count += 1;
+        if self.count >= self.period {
+            self.initialized = true;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.value = 0.0;
+        self.count = 0;
+        self.has_inputs = false;
+        self.initialized = false;
+    }
+
+    #[getter]
+    fn value(&self) -> f64 { self.value }
+    #[getter]
+    fn initialized(&self) -> bool { self.initialized }
+    #[getter]
+    fn has_inputs(&self) -> bool { self.has_inputs }
 }
 ```
 
-**PyO3 conventions:**
+See `crates/indicators/src/` for the full Rust indicator library. All built-in indicators have Rust implementations that are exposed to Python via PyO3.
+
+### Custom Statistics in Rust
+
+Portfolio statistics can also be implemented in Rust for performance. See `crates/analysis/src/statistics/` for examples (Sharpe ratio, Sortino, max drawdown, etc.).
+
+### PyO3 Binding Conventions
+
 - Use `#[pyclass]` and `#[pymethods]` for Python-visible types
-- Register in `crates/pyo3/src/lib.rs`
-- Follow Rust edition 2024 conventions
+- Register new modules in `crates/pyo3/src/lib.rs`
+- Use `#[getter]` for read-only properties
+- Wrap FFI functions in `abort_on_panic(|| { ... })` — panics must never unwind across FFI
 
 ## Key Conventions
 

@@ -173,6 +173,8 @@ See `crates/trading/examples/strategies/` for Rust strategy examples (EMA cross,
 
 ### Implementing Strategies in Rust
 
+Rust strategies follow the same lifecycle as Python but implement traits directly:
+
 ```rust
 use pyo3::prelude::*;
 use nautilus_trading::strategy::Strategy;
@@ -186,17 +188,26 @@ pub struct MyRustStrategy {
 impl MyRustStrategy {
     #[new]
     fn new(config: MyRustStrategyConfig) -> Self { ... }
+
+    fn on_start(&mut self) { ... }
+    fn on_bar(&mut self, bar: &Bar) { ... }
+    fn on_order_filled(&mut self, event: &OrderFilled) { ... }
+    fn on_stop(&mut self) { ... }
 }
 ```
 
-**PyO3 conventions:**
-- Use `#[pyclass]` and `#[pymethods]` for Python-visible types
-- Register in `crates/pyo3/src/lib.rs` module
-- Follow Rust edition 2024 conventions
-- GIL management: use `Python::attach()` for callback forwarding
-- See `references/guides/` for FFI and Rust coding standards
+See `crates/trading/examples/strategies/ema_cross.rs` and `grid_mm.rs` for working Rust strategy examples.
 
-**Build integration:** New Rust code integrates via `build.py` (static libs + Cython linking).
+### PyO3 Binding Conventions
+
+- Use `#[pyclass]` and `#[pymethods]` for Python-visible types
+- Register new modules in `crates/pyo3/src/lib.rs`
+- Use `Python::attach(|py| { ... })` for callbacks that need the GIL
+- Wrap FFI functions in `abort_on_panic(|| { ... })` — Rust panics must never unwind across FFI
+
+### Build Integration
+
+New Rust code integrates via `build.py` which compiles static libraries and links them through Cython. The build sequence: `cargo build` → static lib → Cython `.pyx` imports → `pip install -e .`
 
 ## Key Conventions
 

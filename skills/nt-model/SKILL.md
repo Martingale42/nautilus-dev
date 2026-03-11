@@ -171,42 +171,81 @@ use nautilus_model::enums::{OrderSide, OrderType};
 
 ### New Instrument Types
 
+All 14 instrument types are defined in Rust (`crates/model/src/instruments/`) and exposed to Python via PyO3. New instruments follow the same pattern:
+
 ```rust
 use pyo3::prelude::*;
+use nautilus_model::identifiers::InstrumentId;
+use nautilus_model::types::{Price, Quantity, Currency};
 
 #[pyclass]
 pub struct MyInstrument {
     id: InstrumentId,
+    price_precision: u8,
+    size_precision: u8,
     // Custom fields
 }
 
 #[pymethods]
 impl MyInstrument {
     #[new]
-    fn new(id: InstrumentId) -> Self { ... }
+    fn new(id: InstrumentId, price_precision: u8, size_precision: u8) -> Self { ... }
 
     #[getter]
-    fn id(&self) -> InstrumentId { self.id.clone() }
+    fn id(&self) -> InstrumentId { self.id }
+
+    fn make_price(&self, value: f64) -> Price {
+        Price::new(value, self.price_precision)
+    }
+
+    fn make_qty(&self, value: f64) -> Quantity {
+        Quantity::new(value, self.size_precision)
+    }
 }
 ```
 
 ### New Identifier Types
 
+Identifiers are lightweight string wrappers with `Copy` semantics:
+
 ```rust
 use pyo3::prelude::*;
+use nautilus_model::identifier::Ustr;  // Interned string type
 
 #[pyclass]
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct MyIdentifier {
-    value: String,
+    value: Ustr,  // Interned for O(1) equality checks
+}
+
+#[pymethods]
+impl MyIdentifier {
+    #[new]
+    fn new(value: &str) -> Self {
+        Self { value: Ustr::from(value) }
+    }
+
+    fn __repr__(&self) -> String { format!("MyIdentifier('{}')", self.value) }
+    fn __hash__(&self) -> u64 { ... }
 }
 ```
 
-**PyO3 conventions:**
+### Value Types in Rust
+
+Value types (`Price`, `Quantity`, `Money`) use fixed-point representation internally:
+- Standard mode: `i64` backing with precision 0-9
+- High-precision mode: `i128` backing (enable `high-precision` feature flag)
+- Construction: `Price::new(value, precision)` or `Price::from_raw(raw_value, precision)`
+- Cross-FFI: use `from_raw` to preserve exact precision when passing between Rust and Python
+
+### PyO3 Binding Conventions
+
 - Use `#[pyclass]` and `#[pymethods]` for Python-visible types
 - Register in `crates/pyo3/src/lib.rs`
-- Value types use `Copy` semantics where possible
-- Identifier types implement `Hash`, `PartialEq`, `Eq`
+- Identifier types: implement `Hash`, `PartialEq`, `Eq`, `Copy`
+- Value types: use `Copy` semantics, implement `Display` for `__repr__`
+- Wrap FFI functions in `abort_on_panic(|| { ... })`
+- Use `Ustr` (interned strings) for identifiers — O(1) equality and hashing
 
 ## Key Conventions
 

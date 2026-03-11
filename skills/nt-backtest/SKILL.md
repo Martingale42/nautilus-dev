@@ -171,26 +171,42 @@ See `references/examples/rust_backtest/` for Rust backtest examples.
 
 ### Performance-Optimized Fill Models
 
+Rust fill models are valuable for complex matching logic (e.g., order book simulation, market impact models) where Python overhead matters:
+
 ```rust
 use pyo3::prelude::*;
+use nautilus_model::instruments::InstrumentAny;
+use nautilus_model::orders::OrderAny;
+use nautilus_model::types::Price;
 
 #[pyclass]
 pub struct MyRustFillModel {
-    // Model state
+    prob_fill_on_limit: f64,
+    prob_slippage: f64,
 }
 
 #[pymethods]
 impl MyRustFillModel {
     #[new]
-    fn new() -> Self { ... }
-    // Implement fill logic methods
+    fn new(prob_fill_on_limit: f64, prob_slippage: f64) -> Self {
+        Self { prob_fill_on_limit, prob_slippage }
+    }
+
+    fn is_limit_filled(&self) -> bool { ... }
+    fn is_slipped(&self) -> bool { ... }
 }
 ```
 
-**PyO3 conventions:**
+### Custom Matching Logic
+
+The matching engine core lives in `crates/execution/src/matching_core/`. For custom matching behavior, extend the Rust matching engine and expose via PyO3. See `crates/backtest/` for the backtest engine Rust implementation.
+
+### PyO3 Binding Conventions
+
 - Use `#[pyclass]` and `#[pymethods]` for Python-visible types
 - Register in `crates/pyo3/src/lib.rs`
-- Rust fill models can be significantly faster for complex matching logic
+- Wrap FFI functions in `abort_on_panic(|| { ... })`
+- Use workspace dependency inheritance (`serde = { workspace = true }`)
 
 ## Key Conventions
 
