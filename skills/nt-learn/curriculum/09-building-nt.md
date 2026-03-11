@@ -76,7 +76,7 @@ from nautilus_trader.test_kit.stubs.data import TestDataStubs
 from nautilus_trader.test_kit.stubs.execution import TestExecStubs
 ```
 
-See `developer_guide/spec_data_testing.md` and `developer_guide/spec_exec_testing.md` in the nt-adapter-dev skill references.
+See `developer_guide/spec_data_testing.md` and `developer_guide/spec_exec_testing.md` in the nt-adapters skill references.
 
 ## Building Execution Algorithms
 
@@ -197,13 +197,13 @@ For deeper work in specific areas, use the appropriate nautilus-dev skill:
 
 | Area | Skill |
 |------|-------|
-| Adapter development | `nt-adapter-dev` |
-| Execution pipeline, FFI | `nt-core-dev` |
-| Strategy/Actor in Rust | `nt-strategy-dev` |
-| Persistence, data catalog | `nt-persistence-dev` |
-| Kernel, boot sequence | `nt-kernel-dev` |
-| Backtest engine, fill models | `nt-backtest-dev` |
-| Analysis, statistics | `nt-analysis-dev` |
+| Strategy logic, order execution, risk | `nt-trading` |
+| Indicators, signals, analysis | `nt-signals` |
+| Data pipelines, catalog, serialization | `nt-data` |
+| Backtesting, fill models | `nt-backtest` |
+| Live nodes, system boot, deployment | `nt-live` |
+| Adapter development, venue integration | `nt-adapters` |
+| Domain model types, instruments, identifiers | `nt-model` |
 
 Each skill has bundled reference docs and exploration guides for its domain.
 
