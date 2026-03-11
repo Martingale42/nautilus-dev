@@ -297,6 +297,23 @@ class CustomSerialized(Data):
 
 ---
 
+## Rust Custom Data Types
+
+Custom data types are a **Python-only** feature. The `@customdataclass` decorator relies on
+Python's `dataclass` machinery and PyArrow for schema generation, which have no Rust equivalent.
+
+However, Rust code can work with custom data through the FFI boundary:
+
+- **Consuming in Rust**: Custom data objects arriving via the message bus are `Data` trait objects.
+  Rust components receive them as opaque `PyObject` references and must call back into Python
+  to access fields.
+- **Defining data types in Rust**: For performance-critical data types, define a Rust struct with
+  `#[pyclass]` and implement the `Data` trait manually. You must also manually implement
+  `to_dict`/`from_dict` and register Arrow schemas via `register_arrow()` on the Python side.
+  This is advanced — prefer Python `@customdataclass` unless profiling shows a bottleneck.
+
+---
+
 ## Key Caveats
 
 1. **Inherit from `Data`**: Custom data classes should inherit from `nautilus_trader.core.data.Data`

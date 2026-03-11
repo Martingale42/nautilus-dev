@@ -101,6 +101,101 @@ Additional Rust-only averages: `average::lr` (linear regression MA), `average::v
 
 ---
 
+## Building a Custom Indicator
+
+To create a custom indicator, subclass `Indicator` and implement `handle_bar()` (or
+`handle_quote_tick` / `handle_trade_tick`), `update_raw()`, and `_reset()`.
+
+### Step-by-step: Exponential Weighted Momentum
+
+```python
+from nautilus_trader.indicators import Indicator
+from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
+from nautilus_trader.model.enums import PriceType
+
+
+class ExponentialWeightedMomentum(Indicator):
+    """
+    Momentum indicator using exponentially weighted price changes.
+
+    Parameters
+    ----------
+    period : int
+        Lookback period for the momentum calculation.
+    price_type : PriceType
+        Price extraction type for ticks.
+    """
+
+    def __init__(self, period: int, price_type: PriceType = PriceType.LAST):
+        # Pass params list for serialization — must match constructor args
+        super().__init__(params=[period])
+        self.period = period
+        self.price_type = price_type
+
+        # Stateful values — all must be reset in _reset()
+        self.value = 0.0
+        self._prev_price = 0.0
+        self._alpha = 2.0 / (period + 1)
+        self._count = 0
+
+    # --- Typed update methods: extract the price, then delegate to update_raw ---
+
+    def handle_bar(self, bar: Bar):
+        self.update_raw(bar.close.as_double())
+
+    def handle_quote_tick(self, tick: QuoteTick):
+        self.update_raw(tick.extract_price(self.price_type).as_double())
+
+    def handle_trade_tick(self, tick: TradeTick):
+        self.update_raw(tick.price.as_double())
+
+    # --- Core calculation ---
+
+    def update_raw(self, close: float):
+        if not self.has_inputs:
+            self._set_has_inputs(True)
+            self._prev_price = close
+            self._count = 1
+            return
+
+        # Momentum = current close - previous close
+        momentum = close - self._prev_price
+        # Exponentially weight it
+        self.value = self._alpha * momentum + (1 - self._alpha) * self.value
+        self._prev_price = close
+        self._count += 1
+
+        if not self.initialized and self._count >= self.period:
+            self._set_initialized(True)
+
+    # --- Reset: MUST reset ALL stateful values ---
+
+    def _reset(self):
+        self.value = 0.0
+        self._prev_price = 0.0
+        self._count = 0
+```
+
+**Key patterns:**
+- `super().__init__(params=[...])` — pass constructor args for indicator serialization
+- `_set_has_inputs(True)` — call on first data point
+- `_set_initialized(True)` — call once enough data for valid output
+- `_reset()` — must reset ALL stateful values (called by `reset()`)
+- `update_raw()` — keep calculation here; typed handlers just extract prices and delegate
+
+**Registering your custom indicator** — same as built-in:
+
+```python
+def on_start(self):
+    self.ewm = ExponentialWeightedMomentum(period=20)
+    self.register_indicator_for_bars(bar_type, self.ewm)
+    self.subscribe_bars(bar_type)
+```
+
+See `templates/indicator.py` for a complete starter template.
+
+---
+
 ## Usage Patterns
 
 ### Creating and registering indicators in a strategy

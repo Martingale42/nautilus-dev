@@ -65,9 +65,17 @@ each tagged with `reconciliation=True`:
 | `create_inferred_order_filled_event`| `OrderFilled`     | Fill inferred from `OrderStatusReport` qty    |
 
 **Inferred fills** are generated when the venue reports a filled quantity larger than
-what the cache knows, but no individual `FillReport` exists. The function calculates
-incremental quantity and price using weighted-average arithmetic, infers liquidity side
-from order type, and estimates commission from `instrument.taker_fee`.
+what the cache knows, but no individual `FillReport` exists. The function:
+
+1. Computes `fill_qty = report.filled_qty - order.filled_qty` (the missing quantity).
+2. Derives the fill price by solving the weighted average equation:
+   `fill_price = (report.avg_px * report.filled_qty - order.avg_px * order.filled_qty) / fill_qty`.
+   If `order.filled_qty == 0` (first fill), `fill_price = report.avg_px` directly.
+3. Infers liquidity side from order type (`MARKET`/`STOP_MARKET` → `TAKER`, else `MAKER`).
+4. Estimates commission as `fill_qty * fill_price * instrument.taker_fee * instrument.multiplier`.
+
+See `nautilus_trader/live/reconciliation.py::create_inferred_order_filled_event` for the
+exact implementation.
 
 The helper `is_within_single_unit_tolerance` handles rounding discrepancies from venues
 (e.g., OKX `fillSz` vs `accFillSz`) by allowing a single-unit tolerance at the
