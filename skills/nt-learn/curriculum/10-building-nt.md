@@ -1,4 +1,4 @@
-# Stage 09: Building NT
+# Stage 10: Building NT
 
 ## Goal
 
@@ -6,7 +6,7 @@ Extend NautilusTrader itself — build adapters, custom data types, execution al
 
 ## Prerequisites
 
-- Stage 08 complete (can navigate Rust source, understand PyO3, build/test crates)
+- Stage 09 complete (can write full Rust strategies/actors, run backtests and live trading in Rust)
 
 ## What Can You Build?
 

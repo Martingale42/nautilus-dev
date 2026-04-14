@@ -160,46 +160,189 @@ BacktestVenueConfig(
 
 ## Rust Usage
 
-```rust
-use nautilus_backtest::engine::BacktestEngine;
-use nautilus_backtest::config::BacktestRunConfig;
+NautilusTrader provides two Rust APIs for backtesting: `BacktestEngine` (low-level) and `BacktestNode` (high-level with catalog streaming). Both run without Python.
+
+### Dependencies
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+nautilus-backtest = { version = "0.55", features = ["streaming"] }
+nautilus-execution = "0.55"
+nautilus-model = { version = "0.55", features = ["stubs"] }
+nautilus-persistence = "0.55"
+nautilus-trading = { version = "0.55", features = ["examples"] }
+
+ahash = "0.8"
+anyhow = "1"
+tempfile = "3"
+ustr = "1"
 ```
 
-See `references/examples/rust_backtest/` for Rust backtest examples.
+Drop `streaming`, `nautilus-persistence`, `tempfile`, `ustr` if only using the low-level `BacktestEngine`.
 
-## Rust Extension
+**Feature flags:**
+
+| Flag | Crate | Effect |
+|---|---|---|
+| `high-precision` | `nautilus-model` | 16-digit fixed precision (default 9). Required for crypto. |
+| `stubs` | `nautilus-model` | Test instrument stubs (`audusd_sim`, etc.) |
+| `examples` | `nautilus-trading` | Example strategies (`EmaCross`, `GridMarketMaker`) |
+| `streaming` | `nautilus-backtest` | Catalog-based data streaming via `BacktestNode` |
+
+### BacktestEngine (Low-Level API)
+
+Direct control: build engine, add venues/instruments, load data in memory, register strategies, run.
+
+```rust
+use ahash::AHashMap;
+use nautilus_backtest::{config::BacktestEngineConfig, engine::BacktestEngine};
+use nautilus_execution::models::{fee::FeeModelAny, fill::FillModelAny};
+use nautilus_model::{
+    enums::{AccountType, BookType, OmsType},
+    identifiers::Venue,
+    instruments::{Instrument, InstrumentAny, stubs::audusd_sim},
+    types::{Money, Quantity},
+};
+use nautilus_trading::examples::strategies::EmaCross;
+
+// 1. Create engine
+let mut engine = BacktestEngine::new(BacktestEngineConfig::default())?;
+
+// 2. Add venue (31 args — most are Option with None defaults)
+engine.add_venue(
+    Venue::from("SIM"),
+    OmsType::Hedging,
+    AccountType::Margin,
+    BookType::L1_MBP,
+    vec![Money::from("1_000_000 USD")],
+    None,            // base_currency
+    None,            // default_leverage
+    AHashMap::new(), // per-instrument leverages
+    None,            // margin_model
+    vec![],          // simulation modules
+    FillModelAny::default(),
+    FeeModelAny::default(),
+    None, // latency_model
+    None, // routing
+    None, // reject_stop_orders
+    None, // support_gtd_orders
+    None, // support_contingent_orders
+    None, // use_position_ids
+    None, // use_random_ids
+    None, // use_reduce_only
+    None, // use_message_queue
+    None, // use_market_order_acks
+    None, // bar_execution
+    None, // bar_adaptive_high_low_ordering
+    None, // trade_execution
+    None, // liquidity_consumption
+    None, // allow_cash_borrowing
+    None, // frozen_account
+    None, // queue_position
+    None, // oto_full_trigger
+    None, // price_protection_points
+)?;
+
+// 3. Add instrument and data
+let instrument = InstrumentAny::CurrencyPair(audusd_sim());
+let instrument_id = instrument.id();
+engine.add_instrument(&instrument)?;
+let quotes = generate_quotes(instrument_id);
+engine.add_data(quotes, None, true, true);
+
+// 4. Register strategy and run
+let strategy = EmaCross::new(instrument_id, Quantity::from("100000"), 10, 20);
+engine.add_strategy(strategy)?;
+engine.run(None, None, None, false)?;
+```
+
+Run the example: `cargo run -p nautilus-backtest --features examples --example engine-ema-cross`
+
+### BacktestNode (High-Level API)
+
+Loads data from `ParquetDataCatalog` and streams in configurable chunks. Requires `streaming` feature.
+
+```rust
+use nautilus_backtest::{
+    config::{BacktestDataConfig, BacktestEngineConfig, BacktestRunConfig, BacktestVenueConfig, NautilusDataType},
+    node::BacktestNode,
+};
+use nautilus_model::enums::{AccountType, BookType, OmsType};
+use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use ustr::Ustr;
+
+// 1. Write data to catalog
+let catalog = ParquetDataCatalog::new(catalog_path, None, None, None, None);
+catalog.write_instruments(vec![instrument])?;
+catalog.write_to_parquet(quotes, None, None, None)?;
+
+// 2. Configure the run (configs use builder pattern)
+let venue_config = BacktestVenueConfig::builder()
+    .name(Ustr::from("SIM"))
+    .oms_type(OmsType::Hedging)
+    .account_type(AccountType::Margin)
+    .book_type(BookType::L1_MBP)
+    .starting_balances(vec!["1_000_000 USD".to_string()])
+    .build();
+
+let data_config = BacktestDataConfig::builder()
+    .data_type(NautilusDataType::QuoteTick)
+    .catalog_path(catalog_path.to_string())
+    .instrument_id(instrument_id)
+    .build();
+
+let run_config = BacktestRunConfig::builder()
+    .venues(vec![venue_config])
+    .data(vec![data_config])
+    .maybe_chunk_size(Some(100))
+    .build();
+
+// 3. Build, add strategies, run
+let mut node = BacktestNode::new(vec![run_config])?;
+node.build()?;
+
+let engine = node.get_engine_mut("ema-cross-run").context("engine not found")?;
+engine.add_strategy(EmaCross::new(instrument_id, Quantity::from("100000"), 10, 20))?;
+
+node.run()?;
+```
+
+Run the example: `cargo run -p nautilus-backtest --features examples,streaming --example node-ema-cross`
+
+### Registering Actors
+
+Actors register with `add_actor` (same pattern as strategies):
+
+```rust
+let actor = SpreadMonitor::new(instrument_id);
+engine.add_actor(actor)?;
+```
+
+## Rust Extension (PyO3 Path)
 
 ### Performance-Optimized Fill Models
 
-Rust fill models are valuable for complex matching logic (e.g., order book simulation, market impact models) where Python overhead matters:
+Rust fill models for complex matching logic (order book simulation, market impact):
 
 ```rust
-use pyo3::prelude::*;
-use nautilus_model::instruments::InstrumentAny;
-use nautilus_model::orders::OrderAny;
 use nautilus_model::types::Price;
 
-#[pyclass]
-pub struct MyRustFillModel {
+pub struct MyFillModel {
     prob_fill_on_limit: f64,
     prob_slippage: f64,
 }
 
-#[pymethods]
-impl MyRustFillModel {
-    #[new]
-    fn new(prob_fill_on_limit: f64, prob_slippage: f64) -> Self {
-        Self { prob_fill_on_limit, prob_slippage }
-    }
-
-    fn is_limit_filled(&self) -> bool { ... }
-    fn is_slipped(&self) -> bool { ... }
+impl MyFillModel {
+    pub fn is_limit_filled(&self) -> bool { /* ... */ }
+    pub fn is_slipped(&self) -> bool { /* ... */ }
 }
 ```
 
 ### Custom Matching Logic
 
-The matching engine core lives in `crates/execution/src/matching_core/`. For custom matching behavior, extend the Rust matching engine and expose via PyO3. See `crates/backtest/` for the backtest engine Rust implementation.
+The matching engine core lives in `crates/execution/src/matching_core/`. Extend it for custom matching behavior.
 
 ### PyO3 Binding Conventions
 
@@ -238,6 +381,6 @@ The matching engine core lives in `crates/execution/src/matching_core/`. For cus
 
 - `references/concepts/` — backtesting, order book
 - `references/api/` — backtest API
-- `references/guides/` — benchmarking practices, benchmarking review checklist
-- `references/examples/` — clock timer, portfolio, cache usage, Rust backtests, model configs
+- `references/guides/` — benchmarking practices, benchmarking review checklist, run_rust_backtest
+- `references/examples/` — clock timer, portfolio, cache usage, Rust backtests (engine_ema_cross, node_ema_cross), model configs
 - `templates/` — fill_model.py

@@ -160,43 +160,219 @@ Extend risk calculations by subclassing margin models or implementing custom pos
 
 ## Rust Usage
 
-```rust
-use nautilus_trading::strategy::Strategy;
-use nautilus_execution::engine::ExecutionEngine;
-```
+NautilusTrader has a complete Rust implementation (v2 Rust) that runs without Python. Strategies and actors are written in pure Rust, compiled to standalone binaries.
 
-Strategy trait implementation in Rust follows the same lifecycle pattern: `on_start()`, `on_stop()`, `on_bar()`, etc.
+### Rust Strategy
 
-See `crates/trading/examples/strategies/` for Rust strategy examples (EMA cross, grid market maker).
-
-## Rust Extension
-
-### Implementing Strategies in Rust
-
-Rust strategies follow the same lifecycle as Python but implement traits directly:
+A strategy owns a `StrategyCore` and implements `DataActor` for data handling. The `nautilus_strategy!` macro wires up `Deref`/`DerefMut` and the `Strategy` trait.
 
 ```rust
-use pyo3::prelude::*;
-use nautilus_trading::strategy::Strategy;
+use nautilus_common::actor::DataActor;
+use nautilus_model::{
+    data::QuoteTick,
+    enums::OrderSide,
+    identifiers::{InstrumentId, StrategyId},
+    types::Quantity,
+};
+use nautilus_trading::{nautilus_strategy, strategy::{Strategy, StrategyConfig, StrategyCore}};
 
-#[pyclass(extends=Strategy)]
-pub struct MyRustStrategy {
-    // Strategy state
+pub struct MyStrategy {
+    core: StrategyCore,
+    instrument_id: InstrumentId,
+    trade_size: Quantity,
 }
 
-#[pymethods]
-impl MyRustStrategy {
-    #[new]
-    fn new(config: MyRustStrategyConfig) -> Self { ... }
+impl MyStrategy {
+    pub fn new(instrument_id: InstrumentId) -> Self {
+        let config = StrategyConfig {
+            strategy_id: Some(StrategyId::from("MY_STRAT-001")),
+            order_id_tag: Some("001".to_string()),
+            ..Default::default()
+        };
+        Self {
+            core: StrategyCore::new(config),
+            instrument_id,
+            trade_size: Quantity::from("1.0"),
+        }
+    }
+}
 
-    fn on_start(&mut self) { ... }
-    fn on_bar(&mut self, bar: &Bar) { ... }
-    fn on_order_filled(&mut self, event: &OrderFilled) { ... }
-    fn on_stop(&mut self) { ... }
+// Generates Deref<Target = DataActorCore>, DerefMut, and Strategy trait impl
+nautilus_strategy!(MyStrategy);
+
+impl std::fmt::Debug for MyStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MyStrategy").finish()
+    }
+}
+
+impl DataActor for MyStrategy {
+    fn on_start(&mut self) -> anyhow::Result<()> {
+        self.subscribe_quotes(self.instrument_id, None, None);
+        Ok(())
+    }
+
+    fn on_quote(&mut self, quote: &QuoteTick) -> anyhow::Result<()> {
+        let order = self.core.order_factory().market(
+            self.instrument_id,
+            OrderSide::Buy,
+            self.trade_size,
+            None, None, None, None, None, None, None,
+        );
+        self.submit_order(order, None, None)?;
+        Ok(())
+    }
 }
 ```
 
-See `crates/trading/examples/strategies/ema_cross.rs` and `grid_mm.rs` for working Rust strategy examples.
+**Override Strategy hooks** (order/position event handlers) by passing a block to the macro:
+
+```rust
+use nautilus_model::events::OrderRejected;
+
+nautilus_strategy!(MyStrategy, {
+    fn on_order_rejected(&mut self, event: OrderRejected) {
+        log::warn!("Order rejected: {}", event.reason);
+    }
+});
+```
+
+**Order creation** (via `self.core.order_factory()`):
+- `market(instrument_id, side, quantity, ...)`
+- `limit(instrument_id, side, quantity, price, ...)`
+- `stop_market(instrument_id, side, quantity, trigger_price, ...)`
+- `stop_limit(instrument_id, side, quantity, price, trigger_price, ...)`
+- `market_if_touched(...)`, `limit_if_touched(...)`, `trailing_stop_market(...)`
+
+**Order management** (via `Strategy` trait, available on `self`):
+
+| Method | Action |
+|---|---|
+| `submit_order` | Submit a new order to the venue |
+| `submit_order_list` | Submit a list of contingent orders |
+| `modify_order` | Modify price, quantity, or trigger price |
+| `cancel_order` | Cancel a specific order |
+| `cancel_orders` | Cancel a filtered set of orders |
+| `cancel_all_orders` | Cancel all orders for an instrument |
+| `close_position` | Close a position with a market order |
+| `close_all_positions` | Close all open positions |
+
+### Rust Actor
+
+An actor owns a `DataActorCore` and receives data/events without order management. The `nautilus_actor!` macro wires up `Deref`/`DerefMut`.
+
+```rust
+use nautilus_common::{nautilus_actor, actor::{DataActor, DataActorConfig, DataActorCore}};
+use nautilus_model::{data::QuoteTick, identifiers::{ActorId, InstrumentId}};
+
+pub struct SpreadMonitor {
+    core: DataActorCore,
+    instrument_id: InstrumentId,
+}
+
+impl SpreadMonitor {
+    pub fn new(instrument_id: InstrumentId) -> Self {
+        let config = DataActorConfig {
+            actor_id: Some(ActorId::from("SPREAD_MON-001")),
+            ..Default::default()
+        };
+        Self {
+            core: DataActorCore::new(config),
+            instrument_id,
+        }
+    }
+}
+
+nautilus_actor!(SpreadMonitor);
+
+impl std::fmt::Debug for SpreadMonitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpreadMonitor").finish()
+    }
+}
+
+impl DataActor for SpreadMonitor {
+    fn on_start(&mut self) -> anyhow::Result<()> {
+        self.subscribe_quotes(self.instrument_id, None, None);
+        Ok(())
+    }
+
+    fn on_quote(&mut self, quote: &QuoteTick) -> anyhow::Result<()> {
+        let spread = quote.ask_price.as_f64() - quote.bid_price.as_f64();
+        log::info!("Spread: {spread:.5}");
+        Ok(())
+    }
+}
+```
+
+### DataActor Handler Table
+
+All handlers have default no-op implementations. Override only what you need:
+
+| Handler | Receives |
+|---|---|
+| `on_start` | Actor started |
+| `on_stop` | Actor stopped |
+| `on_quote` | `QuoteTick` |
+| `on_trade` | `TradeTick` |
+| `on_bar` | `Bar` |
+| `on_book_deltas` | `OrderBookDeltas` |
+| `on_book` | `OrderBook` (at interval) |
+| `on_instrument` | `InstrumentAny` |
+| `on_mark_price` | `MarkPriceUpdate` |
+| `on_index_price` | `IndexPriceUpdate` |
+| `on_funding_rate` | `FundingRateUpdate` |
+| `on_option_greeks` | `OptionGreeks` |
+| `on_option_chain` | `OptionChainSlice` |
+| `on_instrument_status` | `InstrumentStatus` |
+| `on_order_filled` | `OrderFilled` |
+| `on_order_canceled` | `OrderCanceled` |
+| `on_time_event` | `TimeEvent` |
+
+### Running Rust Components
+
+Three paths to run Rust strategies/actors:
+
+1. **Pure Rust** — standalone binary, no Python runtime:
+   ```rust
+   let strategy = MyStrategy::new(instrument_id);
+   node.add_strategy(strategy)?;
+   node.run().await?;
+   ```
+
+2. **Native config from Python** — register built-in Rust strategies from Python:
+   ```python
+   from nautilus_trader.core.nautilus_pyo3.trading import GridMarketMakerConfig
+   config = GridMarketMakerConfig(instrument_id=..., trade_size=...)
+   node.add_native_strategy(config)
+   ```
+
+3. **Plugin loading** (planned) — load compiled `cdylib` crates at runtime.
+
+### Guard Safety
+
+When accessing other actors in callbacks:
+- Look up actors by ID each time; do not cache an `ActorRef`
+- Drop the guard before scope ends; never store in a field
+- Never hold a guard across an `.await` point
+
+## Rust Extension (PyO3 Path)
+
+### Exposing Rust Strategies to Python
+
+Use `#[pyclass]` configs with `add_native_strategy`/`add_native_actor` dispatch:
+
+| Config | Strategy |
+|---|---|
+| `EmaCrossConfig` | `EmaCross` |
+| `GridMarketMakerConfig` | `GridMarketMaker` |
+| `DeltaNeutralVolConfig` | `DeltaNeutralVol` |
+
+| Config | Actor |
+|---|---|
+| `BookImbalanceActorConfig` | `BookImbalanceActor` |
+
+To add custom components to this path: add a `#[pyclass]` config and dispatch arm in `add_native_strategy` or `add_native_actor`.
 
 ### PyO3 Binding Conventions
 
@@ -204,10 +380,6 @@ See `crates/trading/examples/strategies/ema_cross.rs` and `grid_mm.rs` for worki
 - Register new modules in `crates/pyo3/src/lib.rs`
 - Use `Python::attach(|py| { ... })` for callbacks that need the GIL
 - Wrap FFI functions in `abort_on_panic(|| { ... })` — Rust panics must never unwind across FFI
-
-### Build Integration
-
-New Rust code integrates via `build.py` which compiles static libraries and links them through Cython. The build sequence: `cargo build` → static lib → Cython `.pyx` imports → `pip install -e .`
 
 ## Key Conventions
 
@@ -236,8 +408,8 @@ Positions transition: `OPENING → OPEN → CLOSING → CLOSED`. A position's `s
 
 ## References
 
-- `references/concepts/` — strategies, actors, execution, orders, positions, portfolio
+- `references/concepts/` — strategies, actors, execution, orders, positions, portfolio, rust
 - `references/api/` — trading, execution, risk, portfolio, accounting, orders, position, events
-- `references/guides/` — testing patterns
-- `references/examples/` — backtest examples (EMA cross, actor data/signals, msgbus), Rust strategies
+- `references/guides/` — testing patterns, write_rust_strategy, write_rust_actor
+- `references/examples/` — backtest examples (EMA cross, actor data/signals, msgbus), Rust strategies (ema_cross, grid_mm), Rust actors (imbalance)
 - `templates/` — strategy.py, actor.py, exec_algorithm.py

@@ -158,15 +158,156 @@ class MyComponent(Component):
 
 ## Rust Usage
 
-```rust
-use nautilus_system::kernel::NautilusKernel;
-use nautilus_live::node::TradingNode;
-use nautilus_common::clock::LiveClock;
-use nautilus_common::logging::Logger;
-use nautilus_core::time::UnixNanos;
+The `LiveNode` connects to real venues through adapter clients. It uses a builder pattern and runs as a standalone Rust binary — no Python runtime needed.
+
+### Dependencies
+
+```toml
+[dependencies]
+nautilus-common = "0.55"
+nautilus-live = "0.55"
+nautilus-model = "0.55"
+nautilus-okx = "0.55"          # or any venue adapter
+nautilus-trading = { version = "0.55", features = ["examples"] }
+
+anyhow = "1"
+dotenvy = "0.15"
+log = "0.4"
+tokio = { version = "1", features = ["full"] }
 ```
 
-## Rust Extension
+### LiveNode Builder
+
+```rust
+use log::LevelFilter;
+use nautilus_common::{enums::Environment, logging::logger::LoggerConfig};
+use nautilus_live::node::LiveNode;
+use nautilus_model::identifiers::{AccountId, TraderId};
+use nautilus_okx::{
+    common::enums::OKXInstrumentType,
+    config::{OKXDataClientConfig, OKXExecClientConfig},
+    factories::{OKXDataClientFactory, OKXExecutionClientFactory},
+};
+
+let trader_id = TraderId::from("TESTER-001");
+let account_id = AccountId::from("OKX-001");
+
+let data_config = OKXDataClientConfig {
+    instrument_types: vec![OKXInstrumentType::Swap],
+    ..Default::default()
+};
+
+let exec_config = OKXExecClientConfig {
+    trader_id,
+    account_id,
+    instrument_types: vec![OKXInstrumentType::Swap],
+    ..Default::default()
+};
+
+let log_config = LoggerConfig {
+    stdout_level: LevelFilter::Info,
+    ..Default::default()
+};
+
+let mut node = LiveNode::builder(trader_id, Environment::Live)?
+    .with_name("MY-NODE-001".to_string())
+    .with_logging(log_config)
+    .add_data_client(
+        None,
+        Box::new(OKXDataClientFactory::new()),
+        Box::new(data_config),
+    )?
+    .add_exec_client(
+        None,
+        Box::new(OKXExecutionClientFactory::new()),
+        Box::new(exec_config),
+    )?
+    .with_reconciliation(false)  // Enable in production!
+    .with_delay_post_stop_secs(5)
+    .build()?;
+```
+
+### Add Strategies and Run
+
+```rust
+use nautilus_model::{identifiers::InstrumentId, types::Quantity};
+use nautilus_trading::examples::strategies::{GridMarketMaker, GridMarketMakerConfig};
+
+let mut config = GridMarketMakerConfig::new(
+    InstrumentId::from("ETH-USDT-SWAP.OKX"),
+    Quantity::from("10.0"),  // max_position (hard cap on net exposure)
+)
+    .with_trade_size(Quantity::from("0.10"))  // per-order quantity
+    .with_num_levels(3)
+    .with_grid_step_bps(100)
+    .with_skew_factor(0.5)
+    .with_requote_threshold_bps(10)
+    .with_expire_time_secs(8)
+    .with_on_cancel_resubmit(true);
+
+config.base.use_hyphens_in_client_order_ids = false; // OKX requirement
+
+let strategy = GridMarketMaker::new(config);
+node.add_strategy(strategy)?;
+node.run().await?;
+```
+
+### Async Runtime
+
+`LiveNode::run()` is async and requires a Tokio runtime:
+
+```rust
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    // ... node setup ...
+    node.run().await?;
+    Ok(())
+}
+```
+
+The node runs until interrupted (Ctrl+C) or shut down programmatically.
+
+### Environment Variables
+
+Adapters read API credentials from environment variables. Use `.env` + `dotenvy`:
+
+```bash
+export OKX_API_KEY="your_api_key"
+export OKX_API_SECRET="your_api_secret"
+export OKX_API_PASSPHRASE="your_passphrase"
+```
+
+Each adapter documents required variables in its integration guide.
+
+### Adapter Examples
+
+Most adapters include runnable `node_data_tester.rs` and `node_exec_tester.rs` examples:
+
+| Adapter | Example directory |
+|---|---|
+| Architect AX | `crates/adapters/architect_ax/examples/` |
+| Betfair | `crates/adapters/betfair/examples/` |
+| Binance | `crates/adapters/binance/examples/` |
+| BitMEX | `crates/adapters/bitmex/examples/` |
+| Bybit | `crates/adapters/bybit/examples/` |
+| Databento | `crates/adapters/databento/examples/` |
+| Deribit | `crates/adapters/deribit/examples/` |
+| dYdX | `crates/adapters/dydx/examples/` |
+| Hyperliquid | `crates/adapters/hyperliquid/examples/` |
+| Kraken | `crates/adapters/kraken/examples/` |
+| OKX | `crates/adapters/okx/examples/` |
+| Polymarket | `crates/adapters/polymarket/examples/` |
+| Sandbox | `crates/adapters/sandbox/examples/` |
+| Tardis | `crates/adapters/tardis/examples/` |
+
+### Reconciliation
+
+In production, enable reconciliation so the engine aligns cached state with the venue on startup:
+- Remove `.with_reconciliation(false)` from the builder
+- See `references/concepts/live.md` for reconciliation details
+
+## Rust Extension (PyO3 Path)
 
 ### Infrastructure Components in Rust
 
@@ -181,7 +322,7 @@ pub struct MyInfraComponent {
 #[pymethods]
 impl MyInfraComponent {
     #[new]
-    fn new() -> Self { ... }
+    fn new() -> Self { /* ... */ }
 }
 ```
 
@@ -192,8 +333,6 @@ impl MyInfraComponent {
 - Tokio integration: use `tokio::runtime::Runtime` for async Rust code
 - See `references/guides/ffi.md` for FFI patterns
 - See `references/guides/rust.md` for Rust coding standards
-
-**Build integration:** New Rust code integrates via `build.py` (static libs + Cython linking).
 
 ## Key Conventions
 
@@ -232,7 +371,7 @@ See `references/guides/coding_standards.md` for project-wide conventions includi
 
 ## References
 
-- `references/concepts/` — architecture, cache, logging, live, overview
+- `references/concepts/` — architecture, cache, logging, live, overview, rust
 - `references/api/` — system, core, common, config, live
-- `references/guides/` — coding standards, FFI, Python conventions, Rust conventions, environment setup
+- `references/guides/` — coding standards, FFI, Python conventions, Rust conventions, environment setup, run_rust_live_trading
 - `references/examples/live/` — per-adapter live examples (Binance, Bybit, Databento, etc.)

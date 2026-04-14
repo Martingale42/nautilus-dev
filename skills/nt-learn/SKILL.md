@@ -7,7 +7,7 @@ description: "Use when learning NautilusTrader from scratch or deepening underst
 
 ## Overview
 
-A structured learning pathway from beginner to NT developer. Walks through installation, examples, concepts, and progressively deeper implementation — from Python strategies to Rust internals.
+A structured learning pathway from beginner to NT developer. Walks through installation, examples, concepts, and progressively deeper implementation — from Python strategies to Rust internals to full Rust trading systems.
 
 ## Workflow
 
@@ -16,7 +16,8 @@ A structured learning pathway from beginner to NT developer. Walks through insta
    - **Can run examples** → Start at Stage 03
    - **Can write strategies** → Start at Stage 05
    - **Want to learn Rust internals** → Start at Stage 08
-   - **Want to build/extend NT** → Start at Stage 09
+   - **Want to write full Rust trading systems** → Start at Stage 09
+   - **Want to build/extend NT** → Start at Stage 10
 2. Work through stages sequentially from entry point
 3. Each stage has concepts, exercises, and a checkpoint
 4. Ask user for local NT path at first source exploration
@@ -33,7 +34,8 @@ A structured learning pathway from beginner to NT developer. Walks through insta
 | 06 | Indicators & Actors | Stage 05 |
 | 07 | Live Trading | Stage 06 |
 | 08 | Rust Internals | Stage 07 |
-| 09 | Building NT | Stage 08 |
+| 09 | Full Rust Trading | Stage 08 |
+| 10 | Building NT | Stage 09 |
 
 ## Stage Files
 

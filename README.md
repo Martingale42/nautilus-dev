@@ -26,7 +26,9 @@ Domain skills provide NT-specific knowledge to generic workflow skills:
 └─────────────────────────────────────────────────┘
 ```
 
-Each domain skill covers four dimensions: Python usage, Python extension, Rust usage, Rust extension.
+Each domain skill covers five dimensions: Python usage, Python extension, full Rust usage (standalone binaries, no Python), Rust extension (PyO3 bindings), and key conventions.
+
+NautilusTrader's v2 Rust path provides complete trading system capability without Python — actors, strategies, backtesting (BacktestEngine/BacktestNode), and live trading (LiveNode) with 14+ venue adapters. The skills mirror this parity.
 
 ## Setup
 
@@ -58,7 +60,7 @@ repo on GitHub.
 
 | Skill | Purpose |
 |-------|---------|
-| nt-learn | Structured curriculum from beginner to NT developer |
+| nt-learn | Structured curriculum from beginner to NT developer (10 stages, including full Rust trading) |
 
 ### Multi-Skill Invocation
 
@@ -70,6 +72,8 @@ Some tasks need multiple skills. One is **primary** (loads fully), others are **
 | Configure live node for Binance | nt-live | nt-adapters |
 | Load data for my backtest | nt-backtest | nt-data |
 | Build indicator that reads order book | nt-signals | nt-model |
+| Write a Rust strategy for backtesting | nt-trading | nt-backtest |
+| Set up Rust live trading with OKX | nt-live | nt-adapters |
 
 ## Design Reference
 
