@@ -143,11 +143,187 @@ register_arrow(
 
 ## Rust Usage
 
-```rust
-use nautilus_data::engine::DataEngine;
-use nautilus_persistence::catalog::ParquetDataCatalog;
-use nautilus_serialization::arrow::ArrowSerializer;
+NautilusTrader's data persistence and catalog APIs are fully available in
+Rust. Backtest data flows through `ParquetDataCatalog`; live strategies
+read from the cache and request historical windows via the actor API.
+
+### Dependencies
+
+```toml
+[dependencies]
+nautilus-common = "0.55"
+nautilus-model = { version = "0.55", features = ["high-precision"] }
+nautilus-persistence = "0.55"
+
+anyhow = "1"
 ```
+
+### ParquetDataCatalog
+
+The catalog is the canonical on-disk format for backtest data. Layout
+follows NT v1.226+ conventions:
+
+```
+{catalog_root}/
+└── data/
+    ├── instruments/{INSTRUMENT_ID}/instrument.parquet
+    ├── order_book_deltas/{INSTRUMENT_ID}/*.parquet
+    ├── quote_ticks/{INSTRUMENT_ID}/*.parquet
+    └── trade_ticks/{INSTRUMENT_ID}/*.parquet
+```
+
+**Construction** — five positional arguments, most defaulted:
+
+```rust
+use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use std::path::Path;
+
+let catalog = ParquetDataCatalog::new(
+    Path::new("/var/lib/nautilus/catalog/data"),
+    None,  // fs_protocol (None = local filesystem)
+    None,  // fs_storage_options
+    None,  // batch_size override
+    None,  // compression override
+);
+```
+
+**Writing** instruments and data:
+
+```rust
+use nautilus_model::instruments::InstrumentAny;
+
+// Instruments must be written before any data referencing them.
+catalog.write_instruments(vec![instrument])?;
+
+// Quote/trade/delta writes go through write_to_parquet.
+catalog.write_to_parquet(quote_ticks, None, None, None)?;
+catalog.write_to_parquet(trade_ticks, None, None, None)?;
+catalog.write_to_parquet(order_book_deltas, None, None, None)?;
+```
+
+**Reading** for backtest setup or analysis:
+
+```rust
+use nautilus_model::identifiers::InstrumentId;
+
+let instrument_id = InstrumentId::from("ETHUSDT-LINEAR.BYBIT");
+let instruments = catalog.query_instruments(Some(vec![instrument_id]))?;
+let quotes = catalog.query_quote_ticks(Some(vec![instrument_id]), None, None)?;
+let trades = catalog.query_trade_ticks(Some(vec![instrument_id]), None, None)?;
+```
+
+**Idempotency.** By default the catalog skips partitions that already
+exist on disk. Pass `--overwrite` (in your CLI) or delete the partition
+manually to re-write.
+
+### Custom ingest pipeline pattern
+
+External venue archives (NDJSON, CSV.gz, etc.) usually need a small Rust
+binary to convert into NT domain types and write to the catalog. The
+canonical structure:
+
+```rust
+mod source {
+    // Streaming readers — yield one event at a time, low memory.
+    pub fn iter_orderbook_events(zip_path: &Path)
+        -> impl Iterator<Item=Result<VendorEvent>>;
+    pub fn iter_trades(csvgz_path: &Path)
+        -> impl Iterator<Item=Result<VendorTrade>>;
+}
+
+mod decoder {
+    // Pure functions: vendor format → NT domain types.
+    pub fn to_book_deltas(evt: &VendorEvent, inst: &InstrumentAny) -> Vec<OrderBookDelta>;
+    pub fn to_quote_tick(evt: &VendorEvent, inst: &InstrumentAny) -> Option<QuoteTick>;
+    pub fn to_trade_tick(t: &VendorTrade, inst: &InstrumentAny) -> TradeTick;
+}
+
+mod writer {
+    // Batches with flush boundaries.
+    pub struct CatalogWriter { /* ... */ }
+}
+```
+
+Key decoder rules:
+
+- `ts_event = vendor_ts_ms * 1_000_000` (NT uses nanoseconds throughout).
+- For backtest data, `ts_init = ts_event` (the strategy receives the
+  event at the time it was emitted).
+- L1 derived `QuoteTick`s should only be emitted when top-of-book price
+  or size **changes** — emitting on every L2 delta produces millions of
+  redundant rows per day.
+
+Validation at the end of ingest is mandatory:
+
+```rust
+// Per partition: row count + first/last ts_event.
+// Hard fail on L1 invariant violations (bid > ask).
+for q in &batch {
+    anyhow::ensure!(
+        q.bid_price <= q.ask_price,
+        "L1 invariant violated at ts {}", q.ts_event
+    );
+}
+```
+
+A crossed L1 row corrupts every backtest that touches that partition —
+refuse to publish, don't warn.
+
+### Instrument provider for live ingest
+
+When ingesting from a live venue archive, fetch the canonical instrument
+specs via the adapter's `InstrumentProvider` rather than hardcoding:
+
+```rust
+use nautilus_bybit::common::credential::Credential;
+use nautilus_bybit::providers::BybitInstrumentProvider;
+
+// Run in a tokio runtime (provider methods are async).
+let provider = BybitInstrumentProvider::new(
+    /* http_client */, /* credential */, None,
+);
+let instruments = provider.fetch_filtered(
+    &["ETHUSDT", "LTCUSDT", "SUIUSDT"],
+).await?;
+catalog.write_instruments(instruments)?;
+```
+
+The same `InstrumentProvider` runs at live-node startup, so the
+backtest and live paths share the canonical instrument definitions.
+
+### Cache access from Rust
+
+Strategies and actors access the cache via `self.cache()`:
+
+```rust
+fn on_start(&mut self) -> anyhow::Result<()> {
+    let inst = self.cache().instrument(&self.cfg.instrument_id)
+        .ok_or_else(|| anyhow::anyhow!("instrument not in cache"))?;
+    let tick_size = inst.price_increment().as_f64();
+    // ...
+    Ok(())
+}
+```
+
+Other cache queries (mirrors the Python API):
+
+| Method | Returns |
+|--------|---------|
+| `cache.instrument(id)` | `Option<&InstrumentAny>` |
+| `cache.instruments(venue)` | `Vec<InstrumentAny>` |
+| `cache.order(client_order_id)` | `Option<&OrderAny>` |
+| `cache.orders(...)` | `Vec<OrderAny>` |
+| `cache.position(position_id)` | `Option<&Position>` |
+| `cache.positions(...)` | `Vec<Position>` |
+| `cache.account(account_id)` | `Option<AccountAny>` |
+| `cache.quote_tick(id)` | `Option<&QuoteTick>` |
+| `cache.trade_tick(id)` | `Option<&TradeTick>` |
+
+### Historical data via the actor API
+
+The cache is intentionally a thin recent-window store. For longer
+windows, use the actor API's request methods — see `nt-trading` for the
+warmup pattern (`request_quotes` + `on_historical_quotes`).
 
 ## Rust Extension
 

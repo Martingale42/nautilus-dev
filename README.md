@@ -78,3 +78,11 @@ Some tasks need multiple skills. One is **primary** (loads fully), others are **
 ## Design Reference
 
 See `docs/plans/2026-03-11-nautilus-skills-v3-design.md` for the full v3 architecture design.
+
+## Architecture Patterns (Production)
+
+For end-to-end architectural patterns abstracted from real Rust strategies (three-binary layout, onion architecture, atomic state, fail-fast vs fallback, full lifecycle from ingest → backtest → live), see:
+
+- **`docs/architecture_patterns.md`** — Cross-skill reference. **Load first** for any non-trivial Rust strategy work.
+- **`skills/nt-trading/references/guides/rust_patterns.md`** — 13 concrete strategy-side patterns with code.
+- **`skills/nt-trading/references/guides/troubleshooting_rust.md`** — Diagnostic workflow + 12 real failure modes with fixes.

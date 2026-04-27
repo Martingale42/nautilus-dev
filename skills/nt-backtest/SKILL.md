@@ -320,6 +320,78 @@ let actor = SpreadMonitor::new(instrument_id);
 engine.add_actor(actor)?;
 ```
 
+### Warmup window: reserve the first day for calibration
+
+Strategies that need historical data on `on_start` (indicator seeding,
+parameter calibration) request a window that ends at the run start. If
+your run starts at the catalog's earliest data, the request returns
+nothing.
+
+**Convention:** ingest N+1 days, but set `--date-from` to **the second
+day**. The first ingested day becomes the 24h warmup window:
+
+```bash
+# Ingest 7 days
+as-mm-ingest --date-from 2026-04-06 --date-to 2026-04-12 ...
+
+# Backtest only 6 days — first day is warmup buffer
+as-mm-backtest --date-from 2026-04-07 --date-to 2026-04-12 ...
+```
+
+`request_quotes` / `request_trades` issued at run start now have data to
+deliver. See `nt-trading/references/guides/rust_patterns.md` §2 for the
+warmup pattern itself.
+
+### Pre-load instruments before data
+
+Backtest data cannot be loaded for an instrument the engine doesn't
+know about. Always:
+
+```rust
+// 1. Read instruments from catalog
+let instruments = catalog.query_instruments(Some(vec![instrument_id]))?;
+for inst in &instruments { engine.add_instrument(inst)?; }
+
+// 2. Then load data
+let quotes = catalog.query_quote_ticks(Some(vec![instrument_id]), None, None)?;
+engine.add_data(quotes, None, true, true);
+```
+
+Same order in `BacktestNode`: instruments are loaded from catalog at
+build time; if your catalog lacks them, the run aborts before the
+strategy starts.
+
+### Fill model honesty
+
+The default `FillModelAny::default()` is **aggressor-style**: every
+limit order is filled at the touch as soon as the market reaches it,
+ignoring queue priority. For market-making strategies this **overstates
+fill rates by 2–10×** vs production.
+
+**Implication:** backtest PnL is not predictive of live PnL until you
+either (a) implement a queue-aware fill model, or (b) externally
+validate fill rates with shadow-mode live runs.
+
+Document this loudly in your README — anyone reading backtest reports
+should know they're optimistic by construction.
+
+### Three-binary pattern
+
+For real strategies, separate concerns into three binaries sharing one
+strategy:
+
+```
+strategies/my-strat/
+├── src/strategy.rs   ← used by both backtest and live
+├── bin/ingest.rs     ← venue archive → ParquetDataCatalog
+├── bin/backtest.rs   ← BacktestEngine + strategy
+└── bin/live.rs       ← LiveNode + strategy
+```
+
+Strategy code is **identical** between backtest and live — no `#[cfg]`
+branches. The only difference is which engine hosts it. See
+`nt-trading/references/guides/rust_patterns.md` §6 for the full pattern.
+
 ## Rust Extension (PyO3 Path)
 
 ### Performance-Optimized Fill Models
@@ -384,3 +456,4 @@ The matching engine core lives in `crates/execution/src/matching_core/`. Extend 
 - `references/guides/` — benchmarking practices, benchmarking review checklist, run_rust_backtest
 - `references/examples/` — clock timer, portfolio, cache usage, Rust backtests (engine_ema_cross, node_ema_cross), model configs
 - `templates/` — fill_model.py
+- **Cross-skill**: `nt-trading/references/guides/rust_patterns.md` for strategy-side patterns (warmup, atomic state, three-binary), `nt-trading/references/guides/troubleshooting_rust.md` for debug workflow.

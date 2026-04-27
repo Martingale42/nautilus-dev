@@ -307,6 +307,91 @@ In production, enable reconciliation so the engine aligns cached state with the 
 - Remove `.with_reconciliation(false)` from the builder
 - See `references/concepts/live.md` for reconciliation details
 
+### Environment-based testnet/mainnet toggle
+
+Most adapters distinguish testnet from mainnet via a `testnet` flag on
+the config. Encode this in your CLI as an env-driven enum so the same
+binary runs against either:
+
+```rust
+#[derive(Debug, Clone, Copy)]
+pub enum BybitEnv { Testnet, Mainnet }
+
+impl BybitEnv {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let raw = std::env::var("BYBIT_ENV")
+            .unwrap_or_else(|_| "testnet".to_string());
+        match raw.to_lowercase().as_str() {
+            "testnet" => Ok(Self::Testnet),
+            "mainnet" => Ok(Self::Mainnet),
+            other => anyhow::bail!(
+                "BYBIT_ENV must be 'testnet' or 'mainnet', got '{other}'"
+            ),
+        }
+    }
+
+    pub fn is_testnet(&self) -> bool { matches!(self, Self::Testnet) }
+}
+
+// In main:
+let env = BybitEnv::from_env()?;
+let data_config = BybitDataClientConfig {
+    testnet: env.is_testnet(),
+    ..Default::default()
+};
+```
+
+**Validate at startup, not deep in the factory.** Adapter configs read
+credentials at build time; an unset env var produces a panic three
+frames inside the factory. Validate at the top of `main` with a clear
+`anyhow::bail!` so the operator sees what to fix.
+
+### Graceful shutdown via on_stop
+
+`LiveNode::run().await` returns when the runtime receives Ctrl+C or a
+programmatic stop. Before NT tears down, your strategy's `on_stop` runs.
+
+**For live, the safe default is cancel-only:**
+
+```rust
+fn on_stop(&mut self) -> anyhow::Result<()> {
+    self.cancel_all_orders(self.cfg.instrument_id, None, None)?;
+    if let Some(reporter) = self.reporter.as_mut() {
+        reporter.flush()?;
+    }
+    log::warn!("strategy stopped — manual position flatten required");
+    Ok(())
+}
+```
+
+Auto-flatten via market orders during a halt can move price against
+you in thin markets. Leave the position-close decision to the operator
+unless you've validated the venue's liquidity at shutdown windows.
+
+**For backtest, do auto-flatten** so NT records realized PnL for any
+open inventory. See `nt-trading/references/guides/rust_patterns.md` §13.
+
+### Structured logging for live
+
+`tracing_subscriber::fmt().json()` emits one JSON record per log call —
+parseable by Loki, Vector, Promtail, etc. Include the keys an oncall
+operator needs:
+
+```rust
+log::info!(
+    target: "as_mm",
+    inventory = self.inventory,
+    params_epoch = self.params_epoch,
+    halted = self.risk.as_ref().map(|r| r.halted).unwrap_or(false),
+    run_id = self.run_id.as_str(),
+    "quote cycle"
+);
+```
+
+**Don't log on every quote tick.** Even at INFO level this fills disks.
+Log on state transitions (calibration, halt, fill, daily reset) and at
+a low-frequency heartbeat.
+
 ## Rust Extension (PyO3 Path)
 
 ### Infrastructure Components in Rust
@@ -375,3 +460,4 @@ See `references/guides/coding_standards.md` for project-wide conventions includi
 - `references/api/` — system, core, common, config, live
 - `references/guides/` — coding standards, FFI, Python conventions, Rust conventions, environment setup, run_rust_live_trading
 - `references/examples/live/` — per-adapter live examples (Binance, Bybit, Databento, etc.)
+- **Cross-skill**: `nt-trading/references/guides/rust_patterns.md` for strategy-side patterns (warmup, atomic state, override block, graceful on_stop), `nt-trading/references/guides/troubleshooting_rust.md` for live runtime errors (BybitEnv panic, tokio runtime, request_quotes empty).

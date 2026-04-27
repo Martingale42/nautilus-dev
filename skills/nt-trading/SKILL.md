@@ -225,17 +225,122 @@ impl DataActor for MyStrategy {
 }
 ```
 
-**Override Strategy hooks** (order/position event handlers) by passing a block to the macro:
+**Override Strategy hooks** (order/position event handlers) by passing a block to the macro. The block can override multiple handlers — keep heavy logic in methods on the impl block, not inside the macro:
 
 ```rust
-use nautilus_model::events::OrderRejected;
+use nautilus_model::events::{OrderRejected, OrderFilled, OrderCanceled};
 
 nautilus_strategy!(MyStrategy, {
     fn on_order_rejected(&mut self, event: OrderRejected) {
-        log::warn!("Order rejected: {}", event.reason);
+        let reason = event.reason.to_string();
+        if reason.contains("POST_ONLY") {
+            log::info!("post-only reject (expected): {reason}");
+        } else {
+            log::warn!("order rejected: {reason}");
+        }
+    }
+
+    fn on_order_filled(&mut self, event: OrderFilled) {
+        if let Err(e) = self.handle_fill(&event) {
+            log::error!("handle_fill failed: {e}");
+        }
+    }
+
+    fn on_order_canceled(&mut self, event: OrderCanceled) {
+        // ...
     }
 });
 ```
+
+Inside the block: `&mut self` and the event by value. Do not redefine
+`core()` / `core_mut()` — the macro already generates them.
+
+### Warmup pattern (`request_quotes` + `on_historical_*`)
+
+When a strategy needs historical data before quoting (e.g. for indicator
+seeding or calibration), use the request/historical-handler pair:
+
+```rust
+fn on_start(&mut self) -> anyhow::Result<()> {
+    self.subscribe_quotes(self.cfg.instrument_id, None, None);
+    self.subscribe_trades(self.cfg.instrument_id, None, None);
+
+    let now_ns: u64 = self.core.clock().timestamp_ns().into();
+    let start = UnixNanos::from(now_ns - 24 * 3_600_000_000_000); // 24h
+    let end = UnixNanos::from(now_ns);
+
+    self.warmup_quotes = Some(Vec::new());
+    self.warmup_trades = Some(Vec::new());
+    self.request_quotes(self.cfg.instrument_id, Some(start), Some(end), None, None, None)?;
+    self.request_trades(self.cfg.instrument_id, Some(start), Some(end), None, None, None)?;
+    Ok(())
+}
+
+fn on_historical_quotes(&mut self, quotes: &[QuoteTick]) -> anyhow::Result<()> {
+    if let Some(buf) = self.warmup_quotes.as_mut() { buf.extend_from_slice(quotes); }
+    self.maybe_run_warmup();
+    Ok(())
+}
+
+fn on_historical_trades(&mut self, trades: &[TradeTick]) -> anyhow::Result<()> {
+    if let Some(buf) = self.warmup_trades.as_mut() { buf.extend_from_slice(trades); }
+    self.maybe_run_warmup();
+    Ok(())
+}
+```
+
+`maybe_run_warmup()` runs the seeding logic once both buffers have
+arrived. **Backtest gotcha**: if the run starts at the catalog's earliest
+data, `request_*` returns nothing — keep a rolling buffer in `on_quote` /
+`on_trade` as a fallback.
+
+### Daily timer for re-calibration
+
+Use `clock().set_timer_ns()` to schedule a repeating timer at UTC
+midnight (or any anchor). It fires deterministically in backtest:
+
+```rust
+pub const DAILY_TIMER: &str = "my_daily_timer";
+
+fn on_start(&mut self) -> anyhow::Result<()> {
+    let now_ns: u64 = self.core.clock().timestamp_ns().into();
+    let next_midnight = next_utc_midnight_ns(now_ns);
+    self.core.clock_mut().set_timer_ns(
+        DAILY_TIMER,
+        24 * 3_600_000_000_000,                  // interval
+        UnixNanos::from(next_midnight),          // start
+        None, None,                              // stop_time, callback
+    )?;
+    Ok(())
+}
+
+// Override on_time_event in DataActor impl, or in nautilus_strategy! block.
+fn on_time_event(&mut self, event: &TimeEvent) -> anyhow::Result<()> {
+    if event.name.as_str() == DAILY_TIMER {
+        // run daily work
+    }
+    Ok(())
+}
+```
+
+### Instrument resolution
+
+Hardcoded `tick_size` / `size_precision` is a bug magnet — every
+instrument differs. Resolve from the cache in `on_start`:
+
+```rust
+fn on_start(&mut self) -> anyhow::Result<()> {
+    let inst = self.cache().instrument(&self.cfg.instrument_id)
+        .ok_or_else(|| anyhow::anyhow!("instrument not in cache"))?;
+    self.tick_size = inst.price_increment().as_f64();
+    self.instrument = Some(inst.clone());
+    Ok(())
+}
+```
+
+In backtest: `add_instrument(...)` populates the cache. In live: the
+adapter's `InstrumentProvider::initialize()` does it. Either way,
+`on_start` is the right hook — it runs after both.
 
 **Order creation** (via `self.core.order_factory()`):
 - `market(instrument_id, side, quantity, ...)`
@@ -410,6 +515,14 @@ Positions transition: `OPENING → OPEN → CLOSING → CLOSED`. A position's `s
 
 - `references/concepts/` — strategies, actors, execution, orders, positions, portfolio, rust
 - `references/api/` — trading, execution, risk, portfolio, accounting, orders, position, events
-- `references/guides/` — testing patterns, write_rust_strategy, write_rust_actor
+- `references/guides/` — testing patterns, write_rust_strategy, write_rust_actor, **rust_patterns** (architectural patterns from production Rust strategies), **troubleshooting_rust** (common Rust failure modes + diagnostic workflow)
 - `references/examples/` — backtest examples (EMA cross, actor data/signals, msgbus), Rust strategies (ema_cross, grid_mm), Rust actors (imbalance)
 - `templates/` — strategy.py, actor.py, exec_algorithm.py
+
+### When to load which guide
+
+- Building a new Rust strategy → start with `write_rust_strategy.md`, then `rust_patterns.md` for production patterns.
+- Build/runtime errors, unexpected behavior → `troubleshooting_rust.md` (read the diagnostic workflow before guessing).
+- Need to handle order events (rejects, fills, cancels) → `rust_patterns.md` §5 (override block).
+- Need historical warmup or daily re-calibration → `rust_patterns.md` §2 and §3.
+- Splitting a strategy into ingest / backtest / live binaries → `rust_patterns.md` §6.
