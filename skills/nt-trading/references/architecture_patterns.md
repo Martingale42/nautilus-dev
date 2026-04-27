@@ -351,7 +351,8 @@ For **any non-trivial task**, also read:
 - `nt-trading/references/guides/troubleshooting_rust.md` when blocked.
 
 For **architectural decisions** (new strategy, refactor, lifecycle
-question), read this document (`docs/architecture_patterns.md`) first.
+question), read this document (`nt-trading/references/architecture_patterns.md`)
+first.
 
 ## 10. The strategy build sequence
 
@@ -372,9 +373,9 @@ stage doesn't, fix it before moving on.
 
 ## See also
 
-- [`skills/nt-trading/references/guides/rust_patterns.md`](../skills/nt-trading/references/guides/rust_patterns.md) — 13 strategy-side patterns with code.
-- [`skills/nt-trading/references/guides/troubleshooting_rust.md`](../skills/nt-trading/references/guides/troubleshooting_rust.md) — diagnostic workflow + 12 specific failures.
-- [`skills/nt-trading/SKILL.md`](../skills/nt-trading/SKILL.md) — strategy/actor primary reference.
-- [`skills/nt-data/SKILL.md`](../skills/nt-data/SKILL.md) — catalog + ingest patterns.
-- [`skills/nt-backtest/SKILL.md`](../skills/nt-backtest/SKILL.md) — engine + warmup window.
-- [`skills/nt-live/SKILL.md`](../skills/nt-live/SKILL.md) — LiveNode + env toggle + graceful shutdown.
+- [`guides/rust_patterns.md`](guides/rust_patterns.md) — 13 strategy-side patterns with code.
+- [`guides/troubleshooting_rust.md`](guides/troubleshooting_rust.md) — diagnostic workflow + 12 specific failures.
+- [`../SKILL.md`](../SKILL.md) — nt-trading strategy/actor primary reference.
+- [`../../nt-data/SKILL.md`](../../nt-data/SKILL.md) — catalog + ingest patterns.
+- [`../../nt-backtest/SKILL.md`](../../nt-backtest/SKILL.md) — engine + warmup window.
+- [`../../nt-live/SKILL.md`](../../nt-live/SKILL.md) — LiveNode + env toggle + graceful shutdown.

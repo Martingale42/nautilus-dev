@@ -515,14 +515,17 @@ Positions transition: `OPENING → OPEN → CLOSING → CLOSED`. A position's `s
 
 - `references/concepts/` — strategies, actors, execution, orders, positions, portfolio, rust
 - `references/api/` — trading, execution, risk, portfolio, accounting, orders, position, events
+- `references/architecture_patterns.md` — **Cross-skill production reference**. Full strategy lifecycle (ingest → backtest → live), three-binary layout, onion architecture, atomic state, fail-fast philosophy. Load this first for any non-trivial Rust strategy work.
 - `references/guides/` — testing patterns, write_rust_strategy, write_rust_actor, **rust_patterns** (architectural patterns from production Rust strategies), **troubleshooting_rust** (common Rust failure modes + diagnostic workflow)
 - `references/examples/` — backtest examples (EMA cross, actor data/signals, msgbus), Rust strategies (ema_cross, grid_mm), Rust actors (imbalance)
 - `templates/` — strategy.py, actor.py, exec_algorithm.py
 
 ### When to load which guide
 
-- Building a new Rust strategy → start with `write_rust_strategy.md`, then `rust_patterns.md` for production patterns.
+- **Architectural decisions** (new strategy, refactor, lifecycle question) → `architecture_patterns.md` first.
+- Building a new Rust strategy → `architecture_patterns.md` §10 build sequence, then `write_rust_strategy.md`, then `rust_patterns.md` for production patterns.
 - Build/runtime errors, unexpected behavior → `troubleshooting_rust.md` (read the diagnostic workflow before guessing).
 - Need to handle order events (rejects, fills, cancels) → `rust_patterns.md` §5 (override block).
 - Need historical warmup or daily re-calibration → `rust_patterns.md` §2 and §3.
-- Splitting a strategy into ingest / backtest / live binaries → `rust_patterns.md` §6.
+- Splitting a strategy into ingest / backtest / live binaries → `rust_patterns.md` §6 or `architecture_patterns.md` §1.
+- Cross-skill troubleshooting (which skill / file owns this symptom) → `architecture_patterns.md` §8.
